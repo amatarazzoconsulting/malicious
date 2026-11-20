@@ -23,12 +23,17 @@ This project starts a separate implementation rather than pretending that
 missing code was recovered. It keeps the useful architectural idea—a set of
 frontends lowered to a shared representation—and makes the limits explicit:
 
-1. Seven small, documented syntax subsets lower to one internal statement model.
-2. Expressions are validated against a whitelist and compiled to CPython
+1. Seven small, documented Python frontends accept syntax subsets and lower to a
+   shared statement model.
+2. The Python runtime validates expressions and compiles them to CPython
    bytecode functions.
-3. Statements execute in a small runtime with a step budget and no host APIs.
-4. Native x86-64/ARM64/RISC-V code generation, classes/vtables, full language
-   compatibility, and the PDF's broader APIs remain out of scope.
+3. A C++17 SDK compiles a separate Hybrid C-like syntax to verified portable
+   bytecode binaries and runs them in a bounded VM.
+4. C++ applications may explicitly register native function callbacks and
+   selected methods/fields of host classes. The runtime does not perform
+   arbitrary symbol lookup.
+5. Native CPU code generation, source-defined classes, inheritance/vtables,
+   full language compatibility, and the PDFs' broader APIs remain out of scope.
 
 The manuals and examples describe the implementation that actually exists;
 they do not repeat unverified performance or compatibility claims from the PDFs.

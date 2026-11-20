@@ -4,18 +4,23 @@
 
 The source PDFs describe a multi-language compiler, a unified AST, and a JIT,
 but do not define a complete grammar or provide parser/compiler source code.
-This project therefore implements a deliberately narrow common subset for seven
-source styles: C, C++, Python, Go, BASIC, COBOL, and JavaScript.
+This project therefore implements deliberately narrow teaching subsets for
+seven source styles in its Python frontend: C, C++, Python, Go, BASIC, COBOL,
+and JavaScript. A separate C++17 SDK implements the Hybrid C-like syntax and
+portable bytecode runtime; it does not parse all seven source syntaxes.
 
-Every frontend lowers to the same statement and expression model. The project
-supports variables, output, conditionals, bounded `while` loops, arithmetic,
-comparisons, boolean logic, and bitwise operations. It does **not** implement
-functions (apart from an optional zero-argument C/C++/Go `main` wrapper),
-classes, inheritance, pointers, arrays, imports, exceptions, or general-purpose
-host API access. Type declarations are accepted as syntax but types are dynamic
-at runtime.
+The Python frontends lower to a shared statement model with variables, output,
+conditionals, bounded `while` loops, arithmetic, comparisons, boolean logic, and
+bitwise operations. That frontend does **not** implement classes, inheritance,
+pointers, arrays, exceptions, or general-purpose host API access. Type
+declarations are accepted as syntax but types are dynamic at runtime.
 
-## Runtime and JIT
+The C++ SDK additionally supports calls to explicitly registered host functions
+and instances of explicitly registered host C++ classes, including selected
+fields and methods. Hybrid source does not declare classes itself; inheritance,
+virtual dispatch, and arbitrary host symbol lookup are not implemented.
+
+## Python runtime
 
 The compiler validates source expressions and compiles those expressions into
 CPython bytecode functions at compile time. Program statements are executed by
@@ -24,11 +29,23 @@ expressions. This is a bytecode expression JIT, not native machine-code
 generation, and its performance is not claimed to match an optimizing native
 compiler.
 
-The runtime exposes only variable storage and output. It does not provide
-filesystem, network, process, reflection, or arbitrary host-language calls.
-The step budget bounds executed statements and expression evaluations, but it
-is not an operating-system security boundary and does not guarantee bounded
-memory or wall-clock use for every expression.
+The Python runtime exposes only variable storage and output.
+
+## C++ bytecode runtime
+
+The C++ SDK is implemented in [jit.hpp](../cpp/include/hybridlang/jit.hpp) and
+[jit.cpp](../cpp/src/jit.cpp). It compiles the documented Hybrid C-like syntax
+into verified stack bytecode and can write/read portable `.hbc` binary files.
+The `HYBC` file format is versioned, little-endian, and contains bytecode only;
+host callbacks and C++ objects must be registered again when loading it.
+Execution uses a VM with a configurable instruction budget. It does **not**
+generate native CPU machine code.
+
+`registerFunction` and `registerKeyword` bind a source-visible function name to
+a C++ callback. Only callbacks explicitly registered by the host application
+can run. `addNativeClass<T>`, `addNativeMethod<T>`, and `addNativeField<T>`
+expose selected operations on a host C++ type. The runtime does not look up
+arbitrary C++ symbols or grant callbacks additional permissions automatically.
 
 ## Supported constructs
 
@@ -59,7 +76,7 @@ characters.
 
 ## Frontend-specific subset
 
-| Frontend | Accepted forms |
+| Python frontend | Accepted forms |
 | --- | --- |
 | C | `int main() { ... }`, scalar declarations, assignments, `if`/`else`, `while`, and a limited `printf` format subset |
 | C++ | C-like statements and `std::cout << expression << ... << std::endl;` |
@@ -71,6 +88,15 @@ characters.
 
 These are teaching dialects, not drop-in parsers for the corresponding
 standards. See [examples/](../examples/) for the accepted syntax.
+
+## C++ SDK source subset
+
+The C++ SDK accepts statements in a separate C-like syntax: `let`/`var` and
+scalar declarations, assignment, function calls, member field/method calls,
+brace-delimited `if`/`else` and `while`, and the operators listed above. Each
+statement ends in `;`. It supports no functions or class declarations in Hybrid
+source; host functions/classes are registered from C++ instead. See
+[the C++ SDK guide](cpp-sdk.md) and [C++ examples](../cpp/examples/).
 
 ## C `printf`
 
