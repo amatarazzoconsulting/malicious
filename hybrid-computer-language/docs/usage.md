@@ -37,7 +37,8 @@ raise `ExecutionError` (or its `RuntimeLimitError` subclass).
 
 ## C++ SDK
 
-The C++ library is built with CMake and requires C++17:
+The C++ library is built with CMake and requires C++17, Bison 3.8+, and LLVM
+18+ development libraries:
 
 ```sh
 cmake -S cpp -B build/cpp
@@ -45,17 +46,18 @@ cmake --build build/cpp
 ctest --test-dir build/cpp --output-on-failure
 ```
 
-Run all three embedding samples from the build directory:
+Run the object-emission example from the build directory:
 
 ```sh
 cd build/cpp
+./example_emit_object
 ./example_native_functions
 ./example_host_class
-./example_binary_roundtrip
 ```
 
-The last sample writes `hybrid-demo.hbc` to its current working directory. For
-API examples and supported syntax, see [the C++ SDK guide](cpp-sdk.md).
+The first sample writes `hybrid-program.o`; it does not execute the generated
+code. The other examples print LLVM IR. For API examples and supported syntax,
+see [the C++ SDK guide](cpp-sdk.md).
 
 ## Examples
 

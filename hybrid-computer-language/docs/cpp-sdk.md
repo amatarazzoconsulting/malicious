@@ -1,8 +1,15 @@
-# C++ SDK guide
+# C++ LLVM AOT compiler
 
-## Build and test
+The C++ component parses the Hybrid C-like grammar in
+[`cpp/grammars/hybrid.y`](../cpp/grammars/hybrid.y), emits verified LLVM IR, and
+can write a native object file for the host target. Despite the historical
+`Jit` class name, this API does not execute generated code or implement an
+in-process JIT. Object files are intended for a normal external linker.
 
-Requirements: CMake 3.16+ and a C++17 compiler.
+## Requirements and build
+
+Requirements: CMake 3.16+, a C++17 compiler, Bison 3.8+, and LLVM 18+ development
+libraries with the host target enabled.
 
 ```sh
 cmake -S cpp -B build/cpp
@@ -10,117 +17,108 @@ cmake --build build/cpp
 ctest --test-dir build/cpp --output-on-failure
 ```
 
-The library target is `hybrid_jit`; include
-`hybridlang/jit.hpp` and link against that target.
+The library target is `hybrid_jit`; include `hybridlang/jit.hpp` and link the
+target. The `example_emit_object` program writes `hybrid-program.o`.
+`example_native_functions` and `example_host_class` print IR for inspection.
 
-## Compile and exchange values
+## Compile and emit
 
 ```cpp
 #include "hybridlang/jit.hpp"
-#include <iostream>
 
 int main() {
-    hybridlang::Jit jit;
-    jit.setInput(std::cin);
-    jit.setOutput(std::cout);
-    jit.setGlobal("seed", std::int64_t{21});
-    jit.compile("let answer = seed * 2; println(answer);");
-    jit.run();
-    const auto answer = hybridlang::Jit::asInteger(jit.getGlobal("answer"));
+    hybridlang::Jit compiler;
+    compiler.compile("let answer = 6 * 7;");
+    const auto& ir = compiler.emitIR();
+    compiler.writeObject("program.o");
 }
 ```
 
-`setGlobal` passes host values into a run; `getGlobal` retrieves values
-afterward. The built-in `input()` reads one line from the configured input
-stream. The `print` and `println` callbacks write to the configured output
-stream. `run(maxSteps)` has a default 100,000-instruction budget.
+`compile` parses and type-checks a source string and stores its verified LLVM
+IR. `emitIR()` returns that IR; `writeObject(path)` asks LLVM to emit a host
+object file. Build and link the resulting object using your normal toolchain.
+The compiler does not launch a linker, execute the object, or load generated
+machine code into the current process.
 
-## Register host functions
+## Register external functions
 
-Source calls resolve only to built-ins or functions the host explicitly
-registers. Qualified names such as `std::square` are source aliases, not
-automatic C++ symbol lookup:
-
-```cpp
-jit.registerKeyword("std::square", [](const hybridlang::Arguments& args) {
-    const auto value = hybridlang::Jit::asInteger(args.at(0));
-    return hybridlang::Value{value * value};
-});
-jit.compile("let answer = std::square(9);");
-jit.run();
-```
-
-`registerFunction` and `registerKeyword` both register an explicit callback;
-the latter makes the source-visible alias intent clear. Host callbacks are
-trusted application code and execute synchronously within the VM. The VM's
-instruction budget cannot interrupt a callback that blocks or runs for a long
-time.
-
-## Bridge a C++ class
-
-Classes are registered by the embedding application. Hybrid source can
-construct a registered class, call its registered methods, and access
-registered fields:
+Host functions are represented as explicit source-name-to-linker-symbol
+bindings with a C ABI signature. Supported ABI types are `Void`, `I64`, `F64`,
+`Bool`, and opaque `Pointer`.
 
 ```cpp
-struct Counter { std::int64_t value; };
+using hybridlang::Signature;
+using hybridlang::Type;
 
-jit.addNativeClass<Counter>("Counter", [](const hybridlang::Arguments& args) {
-    return std::make_shared<Counter>(
-        Counter{hybridlang::Jit::asInteger(args.at(0))}
-    );
-});
-jit.addNativeMethod<Counter>(
-    "Counter", "increment",
-    [](Counter& self, const hybridlang::Arguments& args) -> hybridlang::Value {
-        self.value += hybridlang::Jit::asInteger(args.at(0));
-        return hybridlang::Value{self.value};
-    }
+compiler.registerFunction(
+    "std::square",
+    "host_square",
+    Signature{Type::I64, {Type::I64}}
 );
-jit.addNativeField<Counter>(
-    "Counter", "value",
-    [](const Counter& self) -> hybridlang::Value { return hybridlang::Value{self.value}; },
-    [](Counter& self, const hybridlang::Value& value) {
-        self.value = hybridlang::Jit::asInteger(value);
-    }
-);
-jit.compile(
-    "let count = Counter(10); count.increment(2); "
-    "println(count.value);"
-);
-jit.run();
+compiler.compile("let answer = std::square(9);");
+compiler.writeObject("program.o");
 ```
 
-The source-language subset does not declare classes or inheritance. Registration
-is explicit and limited to the constructor, methods, and fields chosen by the
-host. See [`examples/host_class.cpp`](../cpp/examples/host_class.cpp).
+This declares `host_square` in the generated IR; the application must provide
+that symbol when linking. Registration does not search for or execute an
+arbitrary C++ symbol. Numeric `I64`/`F64` arguments can be converted at the
+call site; other argument types must match.
 
-## Portable bytecode binaries
+## Register external classes
 
-`writeBinary("program.hbc")` writes a versioned `HYBC` bytecode file;
-`loadBinary("program.hbc")` verifies and loads it. The binary contains code and
-constants, not host callback implementations or live object instances. Register
-the same required functions/classes in the runtime before running a loaded
-program. The format is portable bytecode, not an operating-system executable
-or native machine code.
+Classes use an opaque pointer ABI. A constructor returns a pointer. A method
+symbol receives the object pointer as its first argument. Fields use explicit
+getter and setter symbols, so no C++ layout or private member access is
+assumed.
 
-`examples/binary_roundtrip.cpp` demonstrates writing and loading a file.
+```cpp
+compiler.registerClass(
+    "Counter", "counter_create",
+    Signature{Type::Pointer, {Type::I64}}
+);
+compiler.registerMethod(
+    "Counter", "increment", "counter_increment",
+    Signature{Type::I64, {Type::Pointer, Type::I64}}
+);
+compiler.registerField(
+    "Counter", "value", "counter_get_value", "counter_set_value", Type::I64
+);
+compiler.compile(
+    "let count = Counter(10); "
+    "count.increment(2); "
+    "count.value = count.value + 1;"
+);
+```
 
-## C++ SDK language subset
+The example declares external functions; it does not embed C++ objects or
+callbacks in the object file. The application supplies the matching ABI
+implementations at link time. Hybrid source does not declare classes,
+inheritance, virtual methods, or object layouts.
 
-This SDK compiles the Hybrid C-like syntax, not arbitrary C++ source. Supported
-forms include:
+## C++ grammar subset
 
-- `let`, `var`, `const`, and scalar declarations, assignment, and literals.
-- Arithmetic, comparisons, short-circuit `&&` / `||`, and integer bitwise
-  operators.
-- Brace-delimited `if` / `else` and `while` blocks.
-- Calls to registered names (`std::name(...)` is allowed as a registered alias).
-- Host object construction, registered field access, and registered method calls.
-- `print(...)`, `println(...)`, and `input()`.
+The Bison grammar accepts:
 
-It does not support Hybrid class declarations, inheritance, templates, pointer
-operations, arbitrary C++ syntax, or unregistered native calls. The separate
-Python frontend accepts small teaching subsets of C, C++, Python, Go, BASIC,
-COBOL, and JavaScript, as listed in [the language manual](manual.md).
-Expression, block, and statement nesting is limited to 128 levels.
+- Scalar `let`, `var`, `const`, and typed declarations with an initializer;
+  supported types are `int`, `long`, `float`, `double`, `bool`, and `auto`.
+- Assignments, numeric and boolean literals, variable references, and
+  arithmetic/comparison/logical/bitwise operators.
+- Brace-delimited `if`/`else` and `while`.
+- Calls to explicitly registered functions/classes, class method calls, and
+  registered scalar field reads/writes.
+- `std::name(...)` as a qualified source alias when that exact alias is
+  registered.
+
+The source is a single top-level program; it does not support string values,
+source-defined functions, source-defined classes, arrays, templates,
+exceptions, arbitrary C++ syntax, or the full standards of C, C++, Python, Go,
+BASIC, COBOL, or JavaScript. Separate Python teaching frontends accept the
+limited per-language forms listed in [the language manual](manual.md); they do
+not feed this LLVM backend.
+
+## Safety and output boundaries
+
+The generated object is ordinary target-specific machine code. Treat it as
+untrusted executable input if you choose to link and run it. This library only
+produces LLVM IR and object files: it does not allocate executable memory,
+change page permissions, or invoke generated code.

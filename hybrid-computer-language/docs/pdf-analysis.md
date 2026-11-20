@@ -27,13 +27,14 @@ frontends lowered to a shared representation—and makes the limits explicit:
    shared statement model.
 2. The Python runtime validates expressions and compiles them to CPython
    bytecode functions.
-3. A C++17 SDK compiles a separate Hybrid C-like syntax to verified portable
-   bytecode binaries and runs them in a bounded VM.
-4. C++ applications may explicitly register native function callbacks and
-   selected methods/fields of host classes. The runtime does not perform
-   arbitrary symbol lookup.
-5. Native CPU code generation, source-defined classes, inheritance/vtables,
-   full language compatibility, and the PDFs' broader APIs remain out of scope.
+3. A C++17/LLVM backend parses a separate Hybrid C-like grammar and emits
+   verified LLVM IR and host-target object files.
+4. C++ applications explicitly register link-time function, constructor,
+   method, and field ABI declarations. Generated objects require the host
+   application to provide those external symbols.
+5. In-process execution of generated machine code, source-defined classes,
+   inheritance/vtables, full language compatibility, and the PDFs' broader APIs
+   remain out of scope.
 
 The manuals and examples describe the implementation that actually exists;
 they do not repeat unverified performance or compatibility claims from the PDFs.
